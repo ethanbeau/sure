@@ -76,6 +76,11 @@
     <%= render "settings/hostings/demo_refresh_settings" %>
   <% end %>
 <% end %>
+<% if Current.user.super_admin? %>
+  <%= settings_section title: t(".session_security") do %>
+    <%= render "settings/hostings/session_security_settings" %>
+  <% end %>
+<% end %>
 <%= settings_section title: t(".danger_zone") do %>
   <%= render "settings/hostings/danger_zone_settings" %>
 <% end %>

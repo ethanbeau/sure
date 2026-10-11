@@ -1,0 +1,31 @@
+<div class="space-y-5">
+  <p class="text-secondary"><%= t("settings.hostings.session_security.description") %></p>
+  <%= render DS::Alert.new(variant: :warning, message: t("settings.hostings.session_security.warning")) %>
+  <p class="text-secondary"><%= t("settings.hostings.session_security.scope") %></p>
+
+  <%= styled_form_with url: settings_session_timeouts_path, scope: :setting, method: :patch, class: "space-y-6" do |form| %>
+    <% session_timeout_fields.each do |field| %>
+      <div class="space-y-2" data-controller="session-timeout-custom">
+        <%= form.select field[:key], field[:options],
+                        { label: t("settings.hostings.session_security.#{field[:name]}_label") },
+                        { data: { action: "change->session-timeout-custom#toggle", "session-timeout-custom-target": "select" } } %>
+        <p class="text-sm text-secondary"><%= t("settings.hostings.session_security.#{field[:name]}_description") %></p>
+        <div data-session-timeout-custom-target="input" <%= "hidden" unless field[:selection] == "custom" %>>
+          <%= form.number_field "session_#{field[:name]}_custom_minutes",
+                                value: field[:selection] == "custom" ? field[:current] : nil,
+                                label: t("settings.hostings.session_security.custom_input_label"),
+                                min: 1,
+                                max: SessionTimeoutPolicy::MAX_TIMEOUT_MINUTES,
+                                step: 1,
+                                required: field[:selection] == "custom",
+                                disabled: field[:selection] != "custom",
+                                data: { "session-timeout-custom-target": "duration" },
+                                placeholder: t("settings.hostings.session_security.custom_placeholder") %>
+          <p class="mt-1 text-xs text-secondary"><%= t("settings.hostings.session_security.custom_help", maximum: number_with_delimiter(SessionTimeoutPolicy::MAX_TIMEOUT_MINUTES)) %></p>
+        </div>
+      </div>
+    <% end %>
+
+    <%= form.submit t("settings.hostings.session_security.save") %>
+  <% end %>
+</div>

@@ -14,7 +14,17 @@
     <%= yield :head %>
   </head>
 
-  <body class="h-[var(--app-height)] overflow-hidden antialiased"<% if sidebar_aware %> data-controller="notification-tray"<% end %>>
+  <% body_data = { controller: ("notification-tray" if sidebar_aware) } %>
+  <% if Current.session %>
+    <% body_data[:controller] = class_names(body_data[:controller], "session-activity") %>
+    <% body_data.merge!(
+      action: "turbo:before-cache@document->session-activity#beforeCache",
+      session_activity_url_value: session_activity_path,
+      session_activity_deadlines_value: SessionTimeoutPolicy.new(Current.session).client_deadlines.to_json,
+      session_activity_expired_url_value: new_session_path(session_expired: true)
+    ) %>
+  <% end %>
+  <%= tag.body class: "h-[var(--app-height)] overflow-hidden antialiased", data: body_data do %>
     <% if Rails.env.development? %>
       <button hidden data-controller="hotkey" data-hotkey="t t /" data-action="theme#toggle"></button>
     <% end %>
@@ -83,5 +93,5 @@
     <div class="fixed z-50 top-6 md:top-4 left-1/2 -translate-x-1/2 w-full md:w-80 px-4 md:px-0 mx-auto md:mx-0 md:right-auto pt-[env(safe-area-inset-top)]"<% if sidebar_aware %> data-notification-tray-target="tray" data-action="turbo:before-morph-attribute->notification-tray#preserveStyle"<% end %>>
       <%= render "layouts/shared/notification_tray" %>
     </div>
-  </body>
+  <% end %>
 </html>

@@ -1,6 +1,7 @@
 ---
 en:
   sessions:
+    expired: Your session expired. Please sign in again.
     create:
       invalid_credentials: Invalid email or password.
       local_login_disabled: Local password login is disabled. Please use single sign-on.

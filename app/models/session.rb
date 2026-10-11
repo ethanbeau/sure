@@ -1,6 +1,8 @@
 class Session < ApplicationRecord
   include Encryptable
 
+  MAX_TIMEOUT_MINUTES = 525_600
+
   # Encrypt user_agent if ActiveRecord encryption is configured
   if encryption_ready?
     encrypts :user_agent
@@ -15,6 +17,31 @@ class Session < ApplicationRecord
   before_create :capture_session_info
 
   after_create :update_user_last_login
+
+  before_create { self.last_activity_at ||= Time.current }
+
+  # Resolves cookie-backed web sessions in one place for Rails controllers,
+  # OAuth browser flows and route constraints. A lock prevents a concurrent
+  # request from updating activity after another request revoked an expired row.
+  def self.authenticate_cookie(id, activity: false, now: Time.current)
+    return if id.blank?
+
+    session = includes(:user).find_by(id: id)
+    return unless session
+
+    session.with_lock do
+      session.reload
+      unless session.user&.reload&.active? && !SessionTimeoutPolicy.new(session, now: now).expired?
+        session.destroy!
+        return
+      end
+
+      session.update_column(:last_activity_at, now) if activity
+    end
+    session
+  rescue ActiveRecord::RecordNotFound
+    nil
+  end
 
   def prev_transaction_page_params
     super || {}

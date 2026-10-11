@@ -14,23 +14,13 @@ Doorkeeper.configure do
     # stale session (e.g. `active` flipped via update_column, which skips
     # callbacks) could still be used to issue a fresh OAuth authorization
     # grant for a deactivated user.
-    if (session_id = cookies.signed[:session_token]).present?
-      if (session_record = Session.find_by(id: session_id))
-        if session_record.user&.active?
-          # Set Current.session so downstream code expecting it behaves normally.
-          Current.session = session_record
-          # Return the authenticated user object as the resource owner.
-          session_record.user
-        else
-          Rails.logger.warn("[AUTH] Rejected OAuth authorization for deactivated user_id=#{session_record.user_id}")
-          session_record.destroy
-          redirect_to new_session_url
-        end
-      else
-        redirect_to new_session_url
-      end
+    session_record = Session.authenticate_cookie(cookies.signed[:session_token], activity: SessionTimeoutPolicy.activity_request?(request))
+    if session_record
+      Current.session = session_record
+      session_record.user
     else
-      redirect_to new_session_url
+      cookies.delete(:session_token)
+      redirect_to new_session_url, alert: I18n.t("sessions.expired")
     end
   end
 
@@ -41,21 +31,13 @@ Doorkeeper.configure do
   #
   # Same active?-check-and-destroy treatment as resource_owner_authenticator above.
   admin_authenticator do
-    if (session_id = cookies.signed[:session_token]).present?
-      if (session_record = Session.find_by(id: session_id))
-        if session_record.user&.active?
-          Current.session = session_record
-          head :forbidden unless session_record.user.super_admin?
-        else
-          Rails.logger.warn("[AUTH] Rejected Doorkeeper admin access for deactivated user_id=#{session_record.user_id}")
-          session_record.destroy
-          redirect_to new_session_url
-        end
-      else
-        redirect_to new_session_url
-      end
+    session_record = Session.authenticate_cookie(cookies.signed[:session_token], activity: SessionTimeoutPolicy.activity_request?(request))
+    if session_record
+      Current.session = session_record
+      head :forbidden unless session_record.user.super_admin?
     else
-      redirect_to new_session_url
+      cookies.delete(:session_token)
+      redirect_to new_session_url, alert: I18n.t("sessions.expired")
     end
   end
 

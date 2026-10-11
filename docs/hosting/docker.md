@@ -190,6 +190,10 @@ The first time you run the app, you will need to register a new account by hitti
 
 After creating your initial admin account, you can control how other people join your self-hosted instance from **Settings > Self-Hosting > Onboarding**.
 
+Optional browser session inactivity and absolute timeouts are configured under
+**Settings > Self-Hosting > Session Security**. See [Browser session timeouts](session-timeouts.md)
+for coverage details and the one-year custom-duration limit.
+
 - **Open**: Anyone can create an account from the registration page.
 - **Invite-only**: New account creation stays enabled. Signups require a valid invite code unless you configure a default family for invite-only onboarding.
 - **Closed**: The registration page is disabled for new signups.

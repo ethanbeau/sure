@@ -20,11 +20,21 @@ module Authentication
         Current.session = session_record
         end_impersonation_if_target_inactive!
       else
-        if self_hosted_first_login?
-          redirect_to new_registration_url
+        request_authentication
+      end
+    end
+
+    def request_authentication
+      if @session_cookie_expired
+        if browser_request?
+          redirect_to new_session_url, alert: t("sessions.expired")
         else
-          redirect_to new_session_url
+          head :unauthorized
         end
+      elsif self_hosted_first_login?
+        redirect_to new_registration_url
+      else
+        redirect_to new_session_url
       end
     end
 
@@ -32,12 +42,16 @@ module Authentication
       cookie_value = cookies.signed[:session_token]
       return if cookie_value.blank?
 
-      session_record = Session.includes(:user).find_by(id: cookie_value)
-      return session_record if session_record&.user&.active?
+      session_record = Session.authenticate_cookie(cookie_value, activity: SessionTimeoutPolicy.activity_request?(request))
+      return session_record if session_record
 
-      session_record&.destroy!
+      @session_cookie_expired = true
       cookies.delete(:session_token)
       nil
+    end
+
+    def browser_request?
+      !request.xhr? && !request.format.json? && !request.format.xml?
     end
 
     def create_session_for(user)

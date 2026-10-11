@@ -16,6 +16,7 @@ class SessionsController < ApplicationController
   end
 
   def new
+    flash.now[:alert] = t("sessions.expired") if params[:session_expired] == "true"
     store_pending_invitation_if_valid
     # Clear any stale mobile/desktop SSO session flag from an abandoned flow
     session.delete(:mobile_sso)

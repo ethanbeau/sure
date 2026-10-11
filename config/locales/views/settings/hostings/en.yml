@@ -30,6 +30,7 @@ en:
         financial_data_providers: Financial Data Providers
         property_valuation_providers: Property Valuation Providers
         sync_settings: Sync Settings
+        session_security: Session Security
         invites: Invite Codes
         title: Self-Hosting
         danger_zone: Danger Zone
@@ -38,6 +39,31 @@ en:
         confirm_clear_cache:
           title: Clear data cache?
           body: Are you sure you want to clear the data cache? This will remove all exchange rates, security prices, account balances, and other data. This action cannot be undone.
+      session_security:
+        description: Configure when users must sign in again. Never is the default so existing login behavior is preserved until an administrator opts in.
+        warning: Changes take effect immediately. Existing sessions, including your own, may expire if they exceed the new limits.
+        scope: These limits apply to interactive browser sessions, including browser sign-in to OAuth authorization and admin pages. OAuth tokens, mobile clients, API keys, and MCP credentials keep their existing lifetimes.
+        inactivity_label: Inactivity timeout
+        absolute_label: Absolute session timeout
+        inactivity_description: Expire a session after the user has not been active for the selected duration.
+        absolute_description: Require users to sign in again after this duration, even if they remain active.
+        never: Never
+        custom: Custom duration
+        custom_input_label: Custom duration in minutes
+        custom_placeholder: Minutes
+        custom_help: Enter a positive whole number of minutes, up to %{maximum} minutes (one year).
+        minutes:
+          one: "%{count} minute"
+          other: "%{count} minutes"
+        hours:
+          one: "%{count} hour"
+          other: "%{count} hours"
+        days:
+          one: "%{count} day"
+          other: "%{count} days"
+        save: Save Changes
+        saved: Session security settings saved.
+        invalid: Enter a positive whole number of minutes up to one year, or select Never.
       provider_selection:
         exchange_rate_title: Exchange Rate Provider
         exchange_rate_description: Select a single provider for fetching currency exchange rates.

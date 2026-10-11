@@ -15,16 +15,8 @@ class SuperAdminConstraint
     cookie_value = request.cookie_jar.signed[:session_token]
     return false if cookie_value.blank?
 
-    session_record = Session.find_by(id: cookie_value)
+    session_record = Session.authenticate_cookie(cookie_value, activity: SessionTimeoutPolicy.activity_request?(request))
     return false unless session_record
-
-    unless session_record.user&.active?
-      # Same cleanup as Authentication#find_session_by_cookie — a stale
-      # session belonging to a deactivated user is destroyed here, not just
-      # denied, so it can't be reused once found.
-      session_record.destroy
-      return false
-    end
 
     session_record.user.super_admin?
   rescue => e

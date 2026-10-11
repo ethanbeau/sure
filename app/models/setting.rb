@@ -2,6 +2,9 @@
 class Setting < RailsSettings::Base
   class ValidationError < StandardError; end
 
+  field :session_inactivity_timeout_minutes, type: :integer, default: nil
+  field :session_absolute_timeout_minutes, type: :integer, default: nil
+
   cache_prefix { "v1" }
 
   # Third-party API keys

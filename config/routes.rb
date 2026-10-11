@@ -342,6 +342,7 @@ Rails.application.routes.draw do
 
   resource :registration, only: %i[new create]
   resources :sessions, only: %i[index new create destroy]
+  post "/session_activity", to: "session_activities#create", as: :session_activity
   # Passwordless sign-in with a discoverable passkey. Unauthenticated by design;
   # rate limited alongside the MFA WebAuthn endpoints in Rack::Attack.
   post "/sessions/passkey_options", to: "passkey_sessions#options", as: :passkey_session_options
@@ -393,6 +394,7 @@ Rails.application.routes.draw do
       delete :clear_cache, on: :collection
       delete :disconnect_external_assistant, on: :collection
     end
+    resource :session_timeouts, only: :update, controller: "session_timeouts"
     resource :payment, only: :show
     resource :security, only: :show
     resources :webauthn_credentials, only: %i[create destroy] do
