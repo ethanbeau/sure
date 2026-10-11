@@ -21,6 +21,8 @@ export default class extends Controller {
     this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
     this.handlePageHide = this.handlePageHide.bind(this);
     this.handlePageShow = this.handlePageShow.bind(this);
+    this.handleWindowBlur = this.handleWindowBlur.bind(this);
+    this.handleWindowFocus = this.handleWindowFocus.bind(this);
     this.activityEvents = [
       "pointerdown",
       "click",
@@ -39,6 +41,8 @@ export default class extends Controller {
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
     window.addEventListener("pagehide", this.handlePageHide);
     window.addEventListener("pageshow", this.handlePageShow);
+    window.addEventListener("blur", this.handleWindowBlur);
+    window.addEventListener("focus", this.handleWindowFocus);
     if (this.deadlinesValue) {
       this.applyDeadlines(JSON.parse(this.deadlinesValue));
     } else {
@@ -63,6 +67,8 @@ export default class extends Controller {
     );
     window.removeEventListener("pagehide", this.handlePageHide);
     window.removeEventListener("pageshow", this.handlePageShow);
+    window.removeEventListener("blur", this.handleWindowBlur);
+    window.removeEventListener("focus", this.handleWindowFocus);
   }
 
   beforeCache() {
@@ -83,6 +89,14 @@ export default class extends Controller {
   }
 
   handlePageShow() {
+    this.checkDeadline();
+  }
+
+  handleWindowBlur() {
+    this.coverForResume();
+  }
+
+  handleWindowFocus() {
     this.checkDeadline();
   }
 

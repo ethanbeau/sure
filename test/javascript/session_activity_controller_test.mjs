@@ -201,6 +201,23 @@ test("returning from the background revalidates before showing private content",
   assert.equal(app.document.documentElement.style.visibility, "hidden");
 });
 
+test("switching tabs covers the page and focus checks the session", async () => {
+  const app = setup();
+  app.dispatchWindow("blur");
+  assert.equal(app.document.documentElement.style.visibility, "hidden");
+
+  app.context.fetch = async (url, options) => {
+    app.requests.push({ url, ...options });
+    return { status: 401 };
+  };
+  app.dispatchWindow("focus");
+  await settle();
+
+  assert.equal(app.requests.length, 1);
+  assert.deepEqual(app.redirects, [app.controller.expiredUrlValue]);
+  assert.equal(app.document.documentElement.style.visibility, "hidden");
+});
+
 test("resume revalidation failures keep content hidden and retry", async () => {
   const app = setup();
   app.dispatch("visibilitychange");
@@ -244,6 +261,7 @@ test("disconnect removes activity listeners", async () => {
   app.dispatch("keydown");
   await settle();
   assert.equal(app.listeners.size, 0);
+  assert.equal(app.windowListeners.size, 0);
   assert.equal(app.requests.length, 0);
   assert.equal(app.timers.size, 0);
 });
