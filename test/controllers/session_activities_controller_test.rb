@@ -62,7 +62,7 @@ class SessionActivitiesControllerTest < ActionDispatch::IntegrationTest
 
     post session_activity_path, headers: { "Accept" => "application/json" }
     assert_response :unauthorized
-    assert_nil cookies[:session_token]
+    assert_predicate cookies[:session_token], :blank?
 
     post session_activity_path, headers: { "Accept" => "application/json" }
     assert_response :unauthorized
