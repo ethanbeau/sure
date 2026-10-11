@@ -14,6 +14,7 @@ function setup(inactivityMinutes = 1) {
   let now = 0;
   let wallNow = 0;
   const listeners = new Map();
+  const windowListeners = new Map();
   const requests = [];
   const redirects = [];
   const timers = new Map();
@@ -38,6 +39,8 @@ function setup(inactivityMinutes = 1) {
     },
     performance: { now: () => now },
     window: {
+      addEventListener: (name, handler) => windowListeners.set(name, handler),
+      removeEventListener: (name) => windowListeners.delete(name),
       clearTimeout: (id) => timers.delete(id),
       setTimeout: (callback, delay) => {
         const id = ++nextTimerId;
@@ -63,7 +66,7 @@ function setup(inactivityMinutes = 1) {
   const controller = createController();
 
   return {
-    controller, context, document, listeners, requests, redirects, timers, createController,
+    controller, context, document, listeners, windowListeners, requests, redirects, timers, createController,
     advance: (milliseconds) => { now += milliseconds; wallNow += milliseconds; },
     advanceWallClock: (milliseconds) => { wallNow += milliseconds; },
     runTimers: () => {
@@ -74,6 +77,7 @@ function setup(inactivityMinutes = 1) {
       }
     },
     dispatch: (name, event = { isTrusted: true }) => listeners.get(name)?.(event),
+    dispatchWindow: (name, event = {}) => windowListeners.get(name)?.(event),
   };
 }
 
@@ -175,6 +179,52 @@ test("waking after expiry revalidates while hiding content when the monotonic cl
       });
     }
   }
+});
+
+test("returning from the background revalidates before showing private content", async () => {
+  const app = setup();
+  app.dispatchWindow("pagehide");
+  assert.equal(app.document.documentElement.style.visibility, "hidden");
+
+  app.advance(120_000);
+  app.context.fetch = async (url, options) => {
+    app.requests.push({ url, ...options });
+    assert.equal(app.document.documentElement.style.visibility, "hidden");
+    return { status: 401 };
+  };
+  app.dispatchWindow("pageshow", { persisted: true });
+  await settle();
+
+  assert.equal(app.requests.length, 1);
+  assert.equal(app.requests[0].headers["X-User-Activity"], undefined);
+  assert.deepEqual(app.redirects, [app.controller.expiredUrlValue]);
+  assert.equal(app.document.documentElement.style.visibility, "hidden");
+});
+
+test("resume revalidation failures keep content hidden and retry", async () => {
+  const app = setup();
+  app.dispatch("visibilitychange");
+  app.document.visibilityState = "hidden";
+  app.dispatch("visibilitychange");
+  app.document.visibilityState = "visible";
+  app.context.fetch = async () => ({ ok: false, status: 500 });
+
+  app.dispatch("visibilitychange");
+  await settle();
+  assert.equal(app.document.documentElement.style.visibility, "hidden");
+  assert.equal(app.controller.resumeValidationRequired, true);
+
+  app.context.fetch = async () => ({ ok: true, status: 200, json: async () => ({
+    server_now: new Date(0).toISOString(),
+    inactivity_deadline: new Date(60_000).toISOString(),
+    absolute_deadline: null,
+  }) });
+  app.advance(5_000);
+  app.runTimers();
+  await settle();
+
+  assert.equal(app.document.documentElement.style.visibility, "");
+  assert.equal(app.controller.resumeValidationRequired, false);
 });
 
 test("moving the wall clock backward cannot extend the session", async () => {

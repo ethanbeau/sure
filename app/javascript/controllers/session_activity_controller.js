@@ -19,6 +19,8 @@ export default class extends Controller {
     this.pendingRequest = null;
     this.recordActivity = this.recordActivity.bind(this);
     this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
+    this.handlePageHide = this.handlePageHide.bind(this);
+    this.handlePageShow = this.handlePageShow.bind(this);
     this.activityEvents = [
       "pointerdown",
       "click",
@@ -35,6 +37,8 @@ export default class extends Controller {
       }),
     );
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    window.addEventListener("pagehide", this.handlePageHide);
+    window.addEventListener("pageshow", this.handlePageShow);
     if (this.deadlinesValue) {
       this.applyDeadlines(JSON.parse(this.deadlinesValue));
     } else {
@@ -57,6 +61,8 @@ export default class extends Controller {
       "visibilitychange",
       this.handleVisibilityChange,
     );
+    window.removeEventListener("pagehide", this.handlePageHide);
+    window.removeEventListener("pageshow", this.handlePageShow);
   }
 
   beforeCache() {
@@ -65,7 +71,34 @@ export default class extends Controller {
   }
 
   handleVisibilityChange() {
-    if (document.visibilityState === "visible") this.checkDeadline();
+    if (document.visibilityState === "hidden") {
+      this.coverForResume();
+    } else {
+      this.checkDeadline();
+    }
+  }
+
+  handlePageHide() {
+    this.coverForResume();
+  }
+
+  handlePageShow() {
+    this.checkDeadline();
+  }
+
+  coverForResume() {
+    if (!this.connected) return;
+
+    this.resumeValidationRequired = true;
+    this.coverContent();
+  }
+
+  coverContent() {
+    if (this.privacyScreenActive) return;
+
+    this.originalVisibility = document.documentElement.style.visibility;
+    document.documentElement.style.visibility = "hidden";
+    this.privacyScreenActive = true;
   }
 
   recordActivity(event) {
@@ -119,6 +152,7 @@ export default class extends Controller {
       const deadlines = await response.json();
       if (this.pendingRequest !== request) return;
       this.applyDeadlines(deadlines);
+      this.resumeValidationRequired = false;
       this.restoreVisibility();
     } catch {
       if (this.pendingRequest !== request) return;
@@ -189,18 +223,20 @@ export default class extends Controller {
   }
 
   checkDeadline() {
-    if (!this.connected || this.deadlineAt === null) return;
+    if (!this.connected) return;
+    if (this.resumeValidationRequired) {
+      this.coverContent();
+      if (!this.pendingRequest) this.requestDeadlines();
+      return;
+    }
+    if (this.deadlineAt === null) return;
     if (this.privacyScreenActive && this.pendingRequest) return;
     if (this.remainingDeadlineMs() > 0) {
       this.scheduleDeadlineCheck();
       return;
     }
 
-    if (!this.privacyScreenActive) {
-      this.originalVisibility = document.documentElement.style.visibility;
-      document.documentElement.style.visibility = "hidden";
-      this.privacyScreenActive = true;
-    }
+    this.coverContent();
 
     // A stalled renewal must not delay hiding the page at its deadline.
     this.cancelRequest();
