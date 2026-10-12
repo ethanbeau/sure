@@ -2,7 +2,6 @@ import { Controller } from "@hotwired/stimulus";
 
 const ACTIVITY_THROTTLE_MS = 60_000;
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
-const RETRY_DELAY_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export default class extends Controller {
@@ -16,6 +15,8 @@ export default class extends Controller {
     this.connected = true;
     this.lastSentAt = Number.NEGATIVE_INFINITY;
     this.timeoutTimer = null;
+    this.backgrounded = document.visibilityState === "hidden";
+    this.resumeValidationRequired = false;
     this.pendingRequest = null;
     this.recordActivity = this.recordActivity.bind(this);
     this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
@@ -51,6 +52,14 @@ export default class extends Controller {
       this.wallClockDeadlineAt = Date.now();
       this.checkDeadline();
     }
+    if (this.backgrounded) {
+      this.coverForResume();
+    } else if (
+      this.deadlinesValue &&
+      (this.deadlineAt === null || this.remainingDeadlineMs() > 0)
+    ) {
+      this.restoreVisibility();
+    }
   }
 
   disconnect() {
@@ -80,7 +89,7 @@ export default class extends Controller {
     if (document.visibilityState === "hidden") {
       this.coverForResume();
     } else {
-      this.checkDeadline();
+      this.resumeFromBackground();
     }
   }
 
@@ -89,7 +98,7 @@ export default class extends Controller {
   }
 
   handlePageShow() {
-    this.checkDeadline();
+    this.resumeFromBackground();
   }
 
   handleWindowBlur() {
@@ -97,33 +106,77 @@ export default class extends Controller {
   }
 
   handleWindowFocus() {
+    this.resumeFromBackground();
+  }
+
+  resumeFromBackground() {
+    if (!this.connected || document.visibilityState === "hidden") return;
+
+    this.backgrounded = false;
+    if (this.deadlineAt === null || this.remainingDeadlineMs() > 0) {
+      // Returning before the known deadline must not depend on a network
+      // round-trip to uncover the page. Still check for server-side revocation.
+      this.resumeValidationRequired = false;
+      this.restoreVisibility();
+      this.scheduleDeadlineCheck();
+      if (!this.pendingRequest) this.requestDeadlines();
+      return;
+    }
     this.checkDeadline();
   }
 
   coverForResume() {
     if (!this.connected) return;
 
+    this.backgrounded = true;
     this.resumeValidationRequired = true;
+    // Safari can suspend fetches and their timeout callbacks in the background.
+    // Start a fresh check on return instead of waiting for a suspended request.
+    this.cancelRequest();
     this.coverContent();
   }
 
   coverContent() {
-    if (this.privacyScreenActive) return;
-
-    this.originalVisibility = document.documentElement.style.visibility;
-    document.documentElement.style.visibility = "hidden";
+    // Reapply on every hide: Turbo morphs can replace inline styles while the
+    // controller instance and its privacyScreenActive flag remain alive.
+    // Opacity preserves hit testing without creating a page-sized blur layer.
+    // Store the previous value in the DOM so Turbo snapshots can restore it too.
+    this.privacyElements().forEach((element) => {
+      if (!("sessionPrivacyOpacity" in element.dataset)) {
+        element.dataset.sessionPrivacyOpacity = element.style.opacity;
+      }
+      element.style.opacity = "0";
+    });
     this.privacyScreenActive = true;
+    // Pending Turbo responses can add top-layer content after the page hides.
+    // Mutation observers run before paint, including after showModal().
+    if (!this.privacyObserver) {
+      this.privacyObserver = new MutationObserver(() => {
+        if (this.privacyScreenActive) this.coverContent();
+      });
+      this.privacyObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["popover"],
+      });
+    }
   }
 
   recordActivity(event) {
     if (
       !this.connected ||
       !event.isTrusted ||
-      document.visibilityState === "hidden" ||
-      this.privacyScreenActive ||
-      this.pendingRequest
+      document.visibilityState === "hidden"
     )
       return;
+    // A real touch is also a resume signal if Safari omitted focus/pageshow.
+    // Validate without renewing the session while the privacy cover is active.
+    if (this.privacyScreenActive) {
+      this.resumeFromBackground();
+      return;
+    }
+    if (this.backgrounded || this.pendingRequest) return;
     if (performance.now() - this.lastSentAt < this.activityThrottleMs) return;
 
     this.requestDeadlines({ activity: true });
@@ -134,7 +187,8 @@ export default class extends Controller {
       'meta[name="csrf-token"]',
     )?.content;
     if (!csrfToken) {
-      if (this.privacyScreenActive) this.retryDeadlineCheck();
+      if (this.privacyScreenActive && !this.backgrounded)
+        window.location.reload();
       return;
     }
 
@@ -151,6 +205,7 @@ export default class extends Controller {
       if (activity) headers["X-User-Activity"] = "true";
       const response = await fetch(this.urlValue, {
         method: "POST",
+        cache: "no-store",
         credentials: "same-origin",
         headers,
         keepalive: activity,
@@ -158,6 +213,7 @@ export default class extends Controller {
       });
       if (this.pendingRequest !== request) return;
       if (response.status === 401) {
+        this.coverContent();
         window.location.replace(this.expiredUrlValue);
         return;
       }
@@ -167,10 +223,13 @@ export default class extends Controller {
       if (this.pendingRequest !== request) return;
       this.applyDeadlines(deadlines);
       this.resumeValidationRequired = false;
-      this.restoreVisibility();
+      if (!this.backgrounded && document.visibilityState !== "hidden") {
+        this.restoreVisibility();
+      }
     } catch {
       if (this.pendingRequest !== request) return;
-      if (this.privacyScreenActive) this.retryDeadlineCheck();
+      if (this.privacyScreenActive && !this.backgrounded)
+        window.location.reload();
     } finally {
       window.clearTimeout(request.timer);
       if (this.pendingRequest === request) this.pendingRequest = null;
@@ -188,7 +247,8 @@ export default class extends Controller {
 
   applyDeadlines(deadlines) {
     const serverNow = Date.parse(deadlines.server_now);
-    if (!Number.isFinite(serverNow)) return;
+    if (!Number.isFinite(serverNow))
+      throw new Error("Invalid session deadlines");
 
     const inactivityDeadline = Date.parse(deadlines.inactivity_deadline);
     const absoluteDeadline = Date.parse(deadlines.absolute_deadline);
@@ -237,7 +297,7 @@ export default class extends Controller {
   }
 
   checkDeadline() {
-    if (!this.connected) return;
+    if (!this.connected || this.backgrounded) return;
     if (this.resumeValidationRequired) {
       this.coverContent();
       if (!this.pendingRequest) this.requestDeadlines();
@@ -258,15 +318,24 @@ export default class extends Controller {
   }
 
   restoreVisibility() {
-    if (!this.privacyScreenActive) return;
-
-    document.documentElement.style.visibility = this.originalVisibility;
+    this.privacyObserver?.disconnect();
+    this.privacyObserver = null;
+    // Do not rely on controller state: a restored snapshot may already carry
+    // the cover from an earlier controller instance.
+    this.privacyElements().forEach((element) => {
+      if (!("sessionPrivacyOpacity" in element.dataset)) return;
+      element.style.opacity = element.dataset.sessionPrivacyOpacity;
+      delete element.dataset.sessionPrivacyOpacity;
+    });
     this.privacyScreenActive = false;
   }
 
-  retryDeadlineCheck() {
-    this.deadlineAt = performance.now() + RETRY_DELAY_MS;
-    this.wallClockDeadlineAt = Date.now() + RETRY_DELAY_MS;
-    this.scheduleDeadlineCheck();
+  privacyElements() {
+    // The controller can be mounted on a small element within the page.
+    // Cover the body and top-layer content wherever it appears in the page.
+    return [
+      document.body,
+      ...document.body.querySelectorAll("dialog, [popover]"),
+    ];
   }
 }

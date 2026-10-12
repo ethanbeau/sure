@@ -17,10 +17,15 @@ class ApplicationController < ActionController::Base
   before_action :detect_os
   before_action :set_default_chat
   before_action :set_active_storage_url_options
+  after_action :disable_html_caching
 
   helper_method :demo_config, :demo_host_match?, :show_demo_warning?, :current_sidekiq_health
 
   private
+    def disable_html_caching
+      response.headers["Cache-Control"] = "private, no-store" if request.format.html?
+    end
+
     def accept_pending_invitation_for(user)
       return false if user.blank?
 
