@@ -298,6 +298,8 @@ Rails.application.routes.draw do
     constraints SuperAdminConstraint.new do
       mount Sidekiq::Web => "/sidekiq"
     end
+    # A normal 404 lets the cookie middleware commit expired-cookie deletions.
+    match "/sidekiq(/*path)", to: ->(_env) { [ 404, {}, [] ] }, via: :all
   end
 
   # AI chats
