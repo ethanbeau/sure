@@ -12,5 +12,6 @@ class SuperAdminConstraintTest < ActionDispatch::IntegrationTest
 
     assert_response :not_found
     assert_not Session.exists?(session_record.id)
+    assert_predicate cookies[:session_token], :blank?
   end
 end

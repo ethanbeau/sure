@@ -18,7 +18,21 @@
   <% if Current.session %>
     <% body_data[:controller] = class_names(body_data[:controller], "session-activity") %>
     <% body_data.merge!(
-      action: "turbo:before-cache@document->session-activity#beforeCache",
+      action: %w[
+        turbo:before-cache@document->session-activity#beforeCache
+        pointerdown@document->session-activity#recordActivity:capture:passive
+        click@document->session-activity#recordActivity:capture:passive
+        keydown@document->session-activity#recordActivity:capture:passive
+        touchstart@document->session-activity#recordActivity:capture:passive
+        wheel@document->session-activity#recordActivity:capture:passive
+        input@document->session-activity#recordActivity:capture:passive
+        change@document->session-activity#recordActivity:capture:passive
+        visibilitychange@document->session-activity#handleVisibilityChange
+        pagehide@window->session-activity#coverForResume
+        pageshow@window->session-activity#resumeFromBackground
+        blur@window->session-activity#coverForResume
+        focus@window->session-activity#resumeFromBackground
+      ].join(" "),
       session_activity_url_value: session_activity_path,
       session_activity_deadlines_value: SessionTimeoutPolicy.new(Current.session).client_deadlines.to_json,
       session_activity_expired_url_value: new_session_path(session_expired: true)

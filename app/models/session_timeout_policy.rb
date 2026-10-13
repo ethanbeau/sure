@@ -1,6 +1,6 @@
 # Current instance-wide policy for interactive, cookie-backed browser sessions.
 class SessionTimeoutPolicy
-  MAX_TIMEOUT_MINUTES = Session::MAX_TIMEOUT_MINUTES
+  MAX_TIMEOUT_MINUTES = 525_600
 
   def initialize(session = nil, now: Time.current, inactivity_minutes: Setting.session_inactivity_timeout_minutes,
                  absolute_minutes: Setting.session_absolute_timeout_minutes)

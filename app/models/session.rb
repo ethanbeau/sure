@@ -1,8 +1,6 @@
 class Session < ApplicationRecord
   include Encryptable
 
-  MAX_TIMEOUT_MINUTES = 525_600
-
   # Encrypt user_agent if ActiveRecord encryption is configured
   if encryption_ready?
     encrypts :user_agent
@@ -26,12 +24,11 @@ class Session < ApplicationRecord
   def self.authenticate_cookie(id, activity: false, now: Time.current)
     return if id.blank?
 
-    session = includes(:user).find_by(id: id)
+    session = find_by(id: id)
     return unless session
 
     session.with_lock do
-      session.reload
-      unless session.user&.reload&.active? && !SessionTimeoutPolicy.new(session, now: now).expired?
+      unless session.user&.active? && !SessionTimeoutPolicy.new(session, now: now).expired?
         session.destroy!
         return
       end

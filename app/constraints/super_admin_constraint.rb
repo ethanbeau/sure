@@ -16,7 +16,10 @@ class SuperAdminConstraint
     return false if cookie_value.blank?
 
     session_record = Session.authenticate_cookie(cookie_value, activity: SessionTimeoutPolicy.activity_request?(request))
-    return false unless session_record
+    unless session_record
+      request.cookie_jar.delete(:session_token)
+      return false
+    end
 
     session_record.user.super_admin?
   rescue => e

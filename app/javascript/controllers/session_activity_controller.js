@@ -18,32 +18,6 @@ export default class extends Controller {
     this.backgrounded = document.visibilityState === "hidden";
     this.resumeValidationRequired = false;
     this.pendingRequest = null;
-    this.recordActivity = this.recordActivity.bind(this);
-    this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
-    this.handlePageHide = this.handlePageHide.bind(this);
-    this.handlePageShow = this.handlePageShow.bind(this);
-    this.handleWindowBlur = this.handleWindowBlur.bind(this);
-    this.handleWindowFocus = this.handleWindowFocus.bind(this);
-    this.activityEvents = [
-      "pointerdown",
-      "click",
-      "keydown",
-      "touchstart",
-      "wheel",
-      "input",
-      "change",
-    ];
-    this.activityEvents.forEach((event) =>
-      document.addEventListener(event, this.recordActivity, {
-        passive: true,
-        capture: true,
-      }),
-    );
-    document.addEventListener("visibilitychange", this.handleVisibilityChange);
-    window.addEventListener("pagehide", this.handlePageHide);
-    window.addEventListener("pageshow", this.handlePageShow);
-    window.addEventListener("blur", this.handleWindowBlur);
-    window.addEventListener("focus", this.handleWindowFocus);
     if (this.deadlinesValue) {
       this.applyDeadlines(JSON.parse(this.deadlinesValue));
     } else {
@@ -54,10 +28,7 @@ export default class extends Controller {
     }
     if (this.backgrounded) {
       this.coverForResume();
-    } else if (
-      this.deadlinesValue &&
-      (this.deadlineAt === null || this.remainingDeadlineMs() > 0)
-    ) {
+    } else if (this.deadlinesValue && this.isLocallyUnexpired()) {
       this.restoreVisibility();
     }
   }
@@ -67,17 +38,12 @@ export default class extends Controller {
     window.clearTimeout(this.timeoutTimer);
     this.cancelRequest();
     this.restoreVisibility();
-    this.activityEvents.forEach((event) =>
-      document.removeEventListener(event, this.recordActivity, true),
-    );
-    document.removeEventListener(
-      "visibilitychange",
-      this.handleVisibilityChange,
-    );
-    window.removeEventListener("pagehide", this.handlePageHide);
-    window.removeEventListener("pageshow", this.handlePageShow);
-    window.removeEventListener("blur", this.handleWindowBlur);
-    window.removeEventListener("focus", this.handleWindowFocus);
+  }
+
+  deadlinesValueChanged(value) {
+    if (!this.connected || !value) return;
+
+    this.applyDeadlines(JSON.parse(value));
   }
 
   beforeCache() {
@@ -93,27 +59,11 @@ export default class extends Controller {
     }
   }
 
-  handlePageHide() {
-    this.coverForResume();
-  }
-
-  handlePageShow() {
-    this.resumeFromBackground();
-  }
-
-  handleWindowBlur() {
-    this.coverForResume();
-  }
-
-  handleWindowFocus() {
-    this.resumeFromBackground();
-  }
-
   resumeFromBackground() {
     if (!this.connected || document.visibilityState === "hidden") return;
 
     this.backgrounded = false;
-    if (this.deadlineAt === null || this.remainingDeadlineMs() > 0) {
+    if (this.isLocallyUnexpired()) {
       // Returning before the known deadline must not depend on a network
       // round-trip to uncover the page. Still check for server-side revocation.
       this.resumeValidationRequired = false;
@@ -274,6 +224,10 @@ export default class extends Controller {
     this.deadlineAt = performance.now() + remaining;
     this.wallClockDeadlineAt = Date.now() + remaining;
     this.scheduleDeadlineCheck();
+  }
+
+  isLocallyUnexpired() {
+    return this.deadlineAt === null || this.remainingDeadlineMs() > 0;
   }
 
   remainingDeadlineMs() {

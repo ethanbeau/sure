@@ -78,6 +78,16 @@ class SessionActivitiesControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "body[data-controller~='session-activity'][data-session-activity-url-value]" do |elements|
       assert_includes elements.first["data-action"], "turbo:before-cache@document->session-activity#beforeCache"
+      %w[pointerdown click keydown touchstart wheel input change].each do |event|
+        assert_includes elements.first["data-action"], "#{event}@document->session-activity#recordActivity:capture:passive"
+      end
+      assert_includes elements.first["data-action"], "visibilitychange@document->session-activity#handleVisibilityChange"
+      %w[pagehide blur].each do |event|
+        assert_includes elements.first["data-action"], "#{event}@window->session-activity#coverForResume"
+      end
+      %w[pageshow focus].each do |event|
+        assert_includes elements.first["data-action"], "#{event}@window->session-activity#resumeFromBackground"
+      end
       deadlines = JSON.parse(elements.first["data-session-activity-deadlines-value"])
       assert_equal (session_record.reload.last_activity_at + 15.minutes).iso8601(3), deadlines.fetch("inactivity_deadline")
     end
