@@ -30,9 +30,9 @@
         visibilitychange@document->session-activity#handleVisibilityChange
         pagehide@window->session-activity#coverForResume
         pageshow@window->session-activity#resumeFromBackground
-        blur@window->session-activity#coverForResume
         focus@window->session-activity#resumeFromBackground
       ].join(" "),
+      session_activity_hide_in_background_value: Current.user.hide_page_in_background?,
       session_activity_url_value: session_activity_path,
       session_activity_deadlines_value: SessionTimeoutPolicy.new(Current.session).client_deadlines.to_json,
       session_activity_expired_url_value: new_session_path(session_expired: true)

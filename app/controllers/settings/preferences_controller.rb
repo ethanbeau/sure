@@ -13,14 +13,13 @@ class Settings::PreferencesController < ApplicationController
   # UsersController#update flow (which expects a full user form payload).
   def update
     @user = Current.user
-    user_params = params.permit(user: [ :preview_features_enabled ]).fetch(:user, {})
+    user_params = params.permit(user: [ :preview_features_enabled, :hide_page_in_background ]).fetch(:user, {})
 
     @user.transaction do
       @user.lock!
       updated_prefs = (@user.preferences || {}).deep_dup
-      if user_params.key?(:preview_features_enabled)
-        updated_prefs["preview_features_enabled"] =
-          ActiveModel::Type::Boolean.new.cast(user_params[:preview_features_enabled])
+      user_params.each do |key, value|
+        updated_prefs[key] = ActiveModel::Type::Boolean.new.cast(value)
       end
       @user.update!(preferences: updated_prefs)
     end

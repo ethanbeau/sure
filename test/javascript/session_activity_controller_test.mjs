@@ -21,7 +21,7 @@ for (const [, event, target, method] of layout.matchAll(
   actions[target].set(event, method);
 }
 
-function setup(inactivityMinutes = 1) {
+function setup(inactivityMinutes = 1, hideInBackground = true) {
   let now = 0;
   let wallNow = 0;
   let activeController;
@@ -83,6 +83,7 @@ function setup(inactivityMinutes = 1) {
     controller.urlValue = "/session_activity";
     controller.expiredUrlValue = "/sessions/new?session_expired=true";
     controller.deadlinesValue = deadlinesValue;
+    controller.hideInBackgroundValue = hideInBackground;
     controller.connect();
     activeController = controller;
     return controller;
@@ -306,16 +307,18 @@ test("returning from the background revalidates before showing private content",
   assert.equal(app.document.body.style.opacity, "0");
 });
 
-test("switching tabs covers the page and focus checks the session", async () => {
+test("switching tabs covers the page and returning checks the session", async () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.document.visibilityState = "hidden";
+  app.dispatch("visibilitychange");
   assert.equal(app.document.body.style.opacity, "0");
 
   app.context.fetch = async (url, options) => {
     app.requests.push({ url, ...options });
     return { status: 401 };
   };
-  app.dispatchWindow("focus");
+  app.document.visibilityState = "visible";
+  app.dispatch("visibilitychange");
   await settle();
 
   assert.equal(app.requests.length, 1);
@@ -323,20 +326,20 @@ test("switching tabs covers the page and focus checks the session", async () => 
   assert.equal(app.document.body.style.opacity, "0");
 });
 
-test("blur covers the entire visible page when mounted on a small element", async () => {
+test("pagehide covers the entire page when mounted on a small element", async () => {
   const app = setup();
   app.controller.element = { style: { opacity: "" }, dataset: {}, querySelectorAll: () => [] };
   app.document.body.style.opacity = "0.9";
   const elements = [{ style: { opacity: "0.8" }, dataset: {} }];
   app.document.body.querySelectorAll = () => elements;
 
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   assert.equal(app.document.visibilityState, "visible");
   assert.equal(app.document.body.style.opacity, "0");
   assert.equal(elements[0].style.opacity, "0");
   assert.equal([...app.observers][0].target, app.document.body);
 
-  // A Turbo response can insert a popover outside the controller while blurred.
+  // A Turbo response can insert a popover outside the controller while backgrounded.
   const popover = { style: { opacity: "" }, dataset: {} };
   elements.push(popover);
   app.mutate();
@@ -518,7 +521,7 @@ test("custom duration fields are required only while Custom is selected", async 
 
 
 test("Safari resume events immediately restore a page before its known deadline", async (t) => {
-  for (const [leave, resume] of [["blur", "focus"], ["pagehide", "pageshow"], ["hidden", "visible"]]) {
+  for (const [leave, resume] of [["pagehide", "pageshow"], ["hidden", "visible"]]) {
     await t.test(`${leave} / ${resume}`, async () => {
       const app = setup();
       if (leave === "hidden") {
@@ -567,7 +570,7 @@ test("returning starts a fresh check even if a background request never settles"
     return new Promise(() => {});
   };
   app.dispatch("click");
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   assert.equal(signal.aborted, true);
   app.context.fetch = async () => ({ ok: true, json: async () => ({
     server_now: new Date(0).toISOString(),
@@ -578,13 +581,13 @@ test("returning starts a fresh check even if a background request never settles"
   assert.equal(app.document.body.style.opacity, "");
 });
 
-test("a resume check completing after another blur cannot reveal the page", async () => {
+test("a resume check completing after another pagehide cannot reveal the page", async () => {
   const app = setup();
   let respond;
   app.context.fetch = () => new Promise((resolve) => { respond = resolve; });
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.dispatchWindow("focus");
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   respond({ ok: true, json: async () => ({ server_now: new Date(0).toISOString() }) });
   await settle();
   assert.equal(app.document.body.style.opacity, "0");
@@ -616,7 +619,7 @@ test("cached privacy cover is removed after a snapshot validates", async () => {
 test("resume restores the page when both timeout policies are disabled", async () => {
   const app = setup();
   app.controller.applyDeadlines({ server_now: new Date(0).toISOString() });
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.context.fetch = async () => ({ ok: true, json: async () => ({
     server_now: new Date(0).toISOString(),
     inactivity_deadline: null,
@@ -631,7 +634,7 @@ test("resume restores the page when both timeout policies are disabled", async (
 
 test("a touch recovers a covered page when Safari omits resume events", async () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.dispatch("touchstart");
   await settle();
   assert.equal(app.document.body.style.opacity, "");
@@ -644,17 +647,17 @@ test("a touch recovers a covered page when Safari omits resume events", async ()
 test("valid resume uncovers immediately even when the session check stalls", async () => {
   const app = setup();
   app.context.fetch = () => new Promise(() => {});
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.dispatchWindow("focus");
   assert.equal(app.document.body.style.opacity, "");
   assert.equal(app.controller.pendingRequest !== null, true);
   app.controller.disconnect();
 });
 
-test("timers cannot uncover the page while the browser remains unfocused", async () => {
+test("timers cannot uncover the page while the page remains backgrounded", async () => {
   const app = setup();
   app.document.hasFocus = () => false;
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.advance(120_000);
   app.runTimers();
   await settle();
@@ -664,7 +667,7 @@ test("timers cannot uncover the page while the browser remains unfocused", async
 
 test("expired validation failure reloads instead of leaving a permanent cover", async () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.advance(120_000);
   app.context.fetch = async () => ({ ok: false, status: 422 });
   app.dispatchWindow("focus");
@@ -692,7 +695,7 @@ test("repeated swipe and resume cycles preserve original opacity, including dial
   const dialog = { style: { opacity: "0.8" }, dataset: {} };
   app.document.body.querySelectorAll = () => [dialog];
   for (let i = 0; i < 3; i++) {
-    app.dispatchWindow("blur");
+    app.dispatchWindow("pagehide");
     app.document.visibilityState = "hidden";
     app.dispatch("visibilitychange");
     assert.equal(app.document.body.style.opacity, "0");
@@ -713,7 +716,7 @@ test("content inserted while covered stays hidden until resume or validation", a
       const app = setup();
       const elements = [];
       app.document.body.querySelectorAll = () => elements;
-      app.dispatchWindow("blur");
+      app.dispatchWindow("pagehide");
       const observer = [...app.observers][0];
       assert.equal(observer.target, app.document.body);
       assert.equal(observer.options.childList, true);
@@ -751,7 +754,7 @@ test("content inserted while covered stays hidden until resume or validation", a
 
 test("disconnect stops observing and restores content inserted while covered", () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   const dialog = { style: { opacity: "0.6" }, dataset: {} };
   app.document.body.querySelectorAll = () => [dialog];
   app.mutate();
@@ -773,7 +776,7 @@ test("fresh server-rendered content removes a cover inherited during morphing", 
 
 test("a failed background validation cannot blank a locally unexpired page", async () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.context.fetch = async () => ({ ok: false, status: 500 });
   app.dispatchWindow("focus");
   assert.equal(app.document.body.style.opacity, "");
@@ -785,7 +788,7 @@ test("a failed background validation cannot blank a locally unexpired page", asy
 
 test("focus arriving before visible resumes when visibility catches up", async () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   app.document.visibilityState = "hidden";
   app.dispatch("visibilitychange");
   app.dispatchWindow("focus");
@@ -810,12 +813,12 @@ test("fresh pages remain visible even if Safari reports hasFocus false", async (
   await settle();
 });
 
-test("Safari resume restores after blur without a focus event or reported focus", async (t) => {
+test("Safari resume restores after pagehide without a focus event or reported focus", async (t) => {
   for (const resume of ["visibilitychange", "persisted pageshow"]) {
     await t.test(resume, async () => {
       const app = setup();
       app.document.hasFocus = () => false;
-      app.dispatchWindow("blur");
+      app.dispatchWindow("pagehide");
       assert.equal(app.document.body.style.opacity, "0");
 
       if (resume === "visibilitychange") {
@@ -838,7 +841,7 @@ test("Safari resume restores after blur without a focus event or reported focus"
 
 test("repeated hide reapplies a cover cleared by a Turbo morph", async () => {
   const app = setup();
-  app.dispatchWindow("blur");
+  app.dispatchWindow("pagehide");
   assert.equal(app.document.body.style.opacity, "0");
   app.document.body.style.opacity = "";
   delete app.document.body.dataset.sessionPrivacyOpacity;
@@ -849,4 +852,81 @@ test("repeated hide reapplies a cover cleared by a Turbo morph", async () => {
   app.dispatch("visibilitychange");
   assert.equal(app.document.body.style.opacity, "");
   await settle();
+});
+
+
+test("browser find and focus changes never cover a visible page", async (t) => {
+  for (const preference of [false, true]) {
+    await t.test(`background privacy ${preference}`, async () => {
+      const app = setup(1, preference);
+      app.dispatch("keydown", { isTrusted: true, metaKey: true, key: "f" });
+      app.dispatchWindow("blur");
+      assert.equal(app.document.body.style.opacity, "");
+      assert.equal(app.controller.backgrounded, false);
+      app.dispatchWindow("focus");
+      await settle();
+      assert.equal(app.document.body.style.opacity, "");
+    });
+  }
+});
+
+test("background privacy off keeps content visible and still enforces expiration on resume", async (t) => {
+  for (const leave of ["visibilitychange", "pagehide"]) {
+    await t.test(leave, async () => {
+      const app = setup(1, false);
+      if (leave === "visibilitychange") {
+        app.document.visibilityState = "hidden";
+        app.dispatch(leave);
+      } else {
+        app.dispatchWindow(leave);
+      }
+      assert.equal(app.document.body.style.opacity, "");
+      app.advanceWallClock(120_000);
+      let respond;
+      app.context.fetch = () => new Promise((resolve) => { respond = resolve; });
+      app.document.visibilityState = "visible";
+      app.dispatchWindow("pageshow");
+      assert.equal(app.document.body.style.opacity, "0");
+      respond({ status: 401 });
+      await settle();
+      assert.deepEqual(app.redirects, [app.controller.expiredUrlValue]);
+    });
+  }
+});
+
+test("background privacy off still covers an expired foreground session", async () => {
+  const app = setup(1, false);
+  app.context.fetch = async () => ({ status: 401 });
+  app.advance(60_000);
+  app.runTimers();
+  assert.equal(app.document.body.style.opacity, "0");
+  await settle();
+  assert.deepEqual(app.redirects, [app.controller.expiredUrlValue]);
+});
+
+
+test("background privacy off resumes a valid session without covering or renewing it", async () => {
+  const app = setup(1, false);
+  app.document.visibilityState = "hidden";
+  app.dispatch("visibilitychange");
+  app.document.visibilityState = "visible";
+  app.dispatch("visibilitychange");
+  assert.equal(app.document.body.style.opacity, "");
+  await settle();
+  assert.equal(app.requests.length, 1);
+  assert.equal(app.requests[0].headers["X-User-Activity"], undefined);
+});
+
+test("changing background privacy while hidden updates the cover without bypassing expiration", () => {
+  const app = setup(1, false);
+  app.document.visibilityState = "hidden";
+  app.dispatch("visibilitychange");
+  app.controller.hideInBackgroundValueChanged(true);
+  assert.equal(app.document.body.style.opacity, "0");
+  app.controller.hideInBackgroundValueChanged(false);
+  assert.equal(app.document.body.style.opacity, "");
+  app.controller.hideInBackgroundValueChanged(true);
+  app.advance(60_000);
+  app.controller.hideInBackgroundValueChanged(false);
+  assert.equal(app.document.body.style.opacity, "0");
 });

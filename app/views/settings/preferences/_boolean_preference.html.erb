@@ -1,0 +1,18 @@
+<%# locals: (preference:, checked:, title:, description:) %>
+<%= settings_section do %>
+  <%= form_with url: settings_preferences_path, method: :patch,
+        data: { controller: "auto-submit-form" } do |form| %>
+    <label for="user_<%= preference %>" class="flex cursor-pointer items-center gap-4 justify-between">
+      <div class="text-sm space-y-1">
+        <p class="text-primary font-medium"><%= title %></p>
+        <p class="text-secondary"><%= description %></p>
+      </div>
+      <%= render DS::Toggle.new(
+            id: "user_#{preference}",
+            name: "user[#{preference}]",
+            checked: checked,
+            data: { auto_submit_form_target: "auto" }
+      ) %>
+    </label>
+  <% end %>
+<% end %>

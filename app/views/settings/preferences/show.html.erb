@@ -267,28 +267,14 @@
   <% end %>
 <% end %>
 
-<%# Preview features toggle — visible to all users, not just admins. Lives at
-    the bottom of Preferences as a standalone card (no section header) so the
-    toggle row is the entire surface. Posts directly to
-    settings#preferences#update via the Settings::PreferencesController,
-    matching the auto-submit pattern used on the Appearance page. %>
-<%= settings_section do %>
-  <%= form_with url: settings_preferences_path, method: :patch,
-        data: { controller: "auto-submit-form" } do |f| %>
-    <%# Wrapping the row in <label for=…> makes the title + description
-        themselves a click target for the toggle, so the cursor-pointer
-        affordance on the container is honest. %>
-    <label for="user_preview_features_enabled" class="flex cursor-pointer items-center gap-4 justify-between">
-      <div class="text-sm space-y-1">
-        <p class="text-primary font-medium"><%= t(".preview.title") %></p>
-        <p class="text-secondary"><%= t(".preview.description") %></p>
-      </div>
-      <%= render DS::Toggle.new(
-            id: "user_preview_features_enabled",
-            name: "user[preview_features_enabled]",
-            checked: @user.preview_features_enabled?,
-            data: { auto_submit_form_target: "auto" }
-      ) %>
-    </label>
-  <% end %>
-<% end %>
+<%= render "boolean_preference",
+      preference: "preview_features_enabled",
+      checked: @user.preview_features_enabled?,
+      title: t(".preview.title"),
+      description: t(".preview.description") %>
+
+<%= render "boolean_preference",
+      preference: "hide_page_in_background",
+      checked: @user.hide_page_in_background?,
+      title: t(".background_privacy.title"),
+      description: t(".background_privacy.description") %>

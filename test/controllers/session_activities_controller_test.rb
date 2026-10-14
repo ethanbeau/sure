@@ -82,12 +82,12 @@ class SessionActivitiesControllerTest < ActionDispatch::IntegrationTest
         assert_includes elements.first["data-action"], "#{event}@document->session-activity#recordActivity:capture:passive"
       end
       assert_includes elements.first["data-action"], "visibilitychange@document->session-activity#handleVisibilityChange"
-      %w[pagehide blur].each do |event|
-        assert_includes elements.first["data-action"], "#{event}@window->session-activity#coverForResume"
-      end
+      assert_includes elements.first["data-action"], "pagehide@window->session-activity#coverForResume"
       %w[pageshow focus].each do |event|
         assert_includes elements.first["data-action"], "#{event}@window->session-activity#resumeFromBackground"
       end
+      assert_not_includes elements.first["data-action"], "blur@window"
+      assert_equal "false", elements.first["data-session-activity-hide-in-background-value"]
       deadlines = JSON.parse(elements.first["data-session-activity-deadlines-value"])
       assert_equal (session_record.reload.last_activity_at + 15.minutes).iso8601(3), deadlines.fetch("inactivity_deadline")
     end

@@ -9,6 +9,7 @@ export default class extends Controller {
     url: String,
     deadlines: String,
     expiredUrl: String,
+    hideInBackground: { type: Boolean, default: false },
   };
 
   connect() {
@@ -83,7 +84,17 @@ export default class extends Controller {
     // Safari can suspend fetches and their timeout callbacks in the background.
     // Start a fresh check on return instead of waiting for a suspended request.
     this.cancelRequest();
-    this.coverContent();
+    if (this.hideInBackgroundValue) this.coverContent();
+  }
+
+  hideInBackgroundValueChanged(value) {
+    if (!this.connected || !this.backgrounded) return;
+
+    if (value) {
+      this.coverContent();
+    } else if (this.isLocallyUnexpired()) {
+      this.restoreVisibility();
+    }
   }
 
   coverContent() {
@@ -121,8 +132,8 @@ export default class extends Controller {
     )
       return;
     // A real touch is also a resume signal if Safari omitted focus/pageshow.
-    // Validate without renewing the session while the privacy cover is active.
-    if (this.privacyScreenActive) {
+    // Validate without renewing the session when returning from the background.
+    if (this.privacyScreenActive || this.backgrounded) {
       this.resumeFromBackground();
       return;
     }

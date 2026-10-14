@@ -51,6 +51,32 @@ class Settings::PreferencesControllerTest < ActionDispatch::IntegrationTest
     assert_not user.reload.preview_features_enabled?
   end
 
+  test "background privacy is an individual preference and preserves other preferences" do
+    user = users(:family_member)
+    other_user = users(:family_admin)
+    user.update!(preferences: { "preview_features_enabled" => true })
+    other_preferences = other_user.preferences.deep_dup
+    sign_in user
+
+    get settings_preferences_url
+    assert_select "input[name='user[hide_page_in_background]'][type='checkbox']:not([checked])"
+    assert_not user.hide_page_in_background?
+
+    patch settings_preferences_url, params: { user: { hide_page_in_background: "1" } }
+    assert_redirected_to settings_preferences_url
+    assert user.reload.hide_page_in_background?
+    assert user.preview_features_enabled?
+    assert_equal other_preferences, other_user.reload.preferences
+
+    get settings_profile_path
+    assert_select "body[data-session-activity-hide-in-background-value='true']"
+
+    patch settings_preferences_url, params: { user: { hide_page_in_background: "0" } }
+    assert_redirected_to settings_preferences_url
+    assert_not user.reload.hide_page_in_background?
+    assert user.preview_features_enabled?
+  end
+
   test "household budget toggle and sharing card only render once personal_budgets is on" do
     user = users(:family_admin)
     user.update!(preferences: (user.preferences || {}).merge("preview_features_enabled" => true))

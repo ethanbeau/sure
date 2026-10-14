@@ -749,6 +749,10 @@ class User < ApplicationRecord
     preferences&.dig("disable_modal_click_outside") == true
   end
 
+  def hide_page_in_background?
+    preferences&.dig("hide_page_in_background") == true
+  end
+
   def preview_features_enabled?
     preferences&.dig("preview_features_enabled") == true
   end
