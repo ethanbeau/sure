@@ -61,7 +61,12 @@ function setup(inactivityMinutes = 1, hideInBackground = true) {
     Date: class extends Date {
       static now() { return wallNow; }
     },
-    performance: { now: () => now },
+    performance: {
+      now: () => now,
+      timeOrigin: 0,
+      getEntriesByType: () => [{ startTime: 0 }],
+      getEntriesByName: () => [],
+    },
     window: {
       clearTimeout: (id) => timers.delete(id),
       setTimeout: (callback, delay) => {
@@ -69,7 +74,7 @@ function setup(inactivityMinutes = 1, hideInBackground = true) {
         timers.set(id, { callback, at: now + delay });
         return id;
       },
-      location: { search: "", replace: (url) => redirects.push(url), reload: () => reloads.push(true) },
+      location: { href: "https://sure.example/accounts", search: "", replace: (url) => redirects.push(url), reload: () => reloads.push(true) },
     },
     fetch: async (url, options) => {
       requests.push({ url, ...options });
@@ -236,6 +241,192 @@ test("longer timeouts retain the one-minute activity throttle", async () => {
   app.dispatch("keydown");
   await settle();
   assert.equal(app.requests.length, 2);
+});
+
+test("the final throttled interaction renews once without signing out early", async () => {
+  const app = setup();
+  let lastActivity = 0;
+  app.context.fetch = async (url, options) => {
+    app.requests.push({ url, ...options });
+    const now = app.context.Date.now();
+    if (now >= lastActivity + 60_000) return { status: 401 };
+    if (options.headers["X-User-Activity"]) lastActivity = now;
+    return { ok: true, json: async () => ({
+      server_now: new Date(now).toISOString(),
+      inactivity_deadline: new Date(lastActivity + 60_000).toISOString(),
+    }) };
+  };
+
+  app.dispatch("click");
+  await settle();
+  app.advance(29_000);
+  app.dispatch("click");
+  assert.equal(app.requests.length, 1);
+  app.advance(1_000);
+  app.runTimers();
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.equal(lastActivity, 30_000);
+
+  app.advance(59_000);
+  app.runTimers();
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.deepEqual(app.redirects, []);
+  app.advance(1_000);
+  app.runTimers();
+  await settle();
+  assert.deepEqual(app.redirects, [app.controller.expiredUrlValue]);
+});
+
+test("shortening the policy reschedules queued activity before the new deadline", async () => {
+  const app = setup(15);
+  app.dispatch("click");
+  await settle();
+  app.advance(40_000);
+  app.dispatch("keydown");
+  app.advance(5_000);
+  app.context.performance.getEntriesByName = () => [{ initiatorType: "fetch", startTime: 45_000 }];
+  app.controller.deadlinesValueChanged(JSON.stringify({
+    server_now: new Date(45_000).toISOString(),
+    inactivity_deadline: new Date(60_000).toISOString(),
+  }));
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.equal(app.requests[1].headers["X-User-Activity"], "true");
+});
+
+test("activity during a validation request is renewed after it completes", async () => {
+  const app = setup();
+  let respond;
+  app.context.fetch = (url, options) => {
+    app.requests.push({ url, ...options });
+    return new Promise((resolve) => { respond = resolve; });
+  };
+  app.advance(10_000);
+  const checking = app.controller.requestDeadlines();
+  app.advance(1_000);
+  app.dispatch("keydown");
+  assert.equal(app.requests.length, 1);
+
+  app.context.fetch = async (url, options) => {
+    app.requests.push({ url, ...options });
+    return { ok: true, json: async () => ({
+      server_now: new Date(11_000).toISOString(),
+      inactivity_deadline: new Date(71_000).toISOString(),
+    }) };
+  };
+  respond({ ok: true, json: async () => ({
+    server_now: new Date(10_000).toISOString(),
+    inactivity_deadline: new Date(60_000).toISOString(),
+  }) });
+  await checking;
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.equal(app.requests[1].headers["X-User-Activity"], "true");
+  assert.equal(app.controller.deadlineAt, 71_000);
+});
+
+test("hiding flushes the final interaction once and cancels its trailing timer", async () => {
+  const app = setup();
+  app.dispatch("click");
+  await settle();
+  app.advance(29_000);
+  app.dispatch("keydown");
+  app.document.visibilityState = "hidden";
+  app.dispatch("visibilitychange");
+  app.dispatchWindow("pagehide");
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.equal(app.requests[1].headers["X-User-Activity"], "true");
+  assert.equal(app.requests[1].keepalive, true);
+  assert.equal(app.requests[1].signal.aborted, false);
+  app.advance(31_000);
+  app.runTimers();
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.equal(app.document.body.style.opacity, "0");
+});
+
+test("navigation flushes queued activity with keepalive without a late heartbeat", async () => {
+  const app = setup();
+  app.dispatch("click");
+  await settle();
+  app.advance(29_000);
+  app.dispatch("keydown");
+  app.controller.disconnect();
+  assert.equal(app.requests.length, 2);
+  assert.equal(app.requests[1].headers["X-User-Activity"], "true");
+  assert.equal(app.requests[1].keepalive, true);
+  assert.equal(app.requests[1].signal.aborted, false);
+  app.advance(31_000);
+  app.runTimers();
+  await settle();
+  assert.equal(app.requests.length, 2);
+  assert.equal(app.timers.size, 0);
+});
+
+test("deadline responses include fetch and body delivery time without trusting the client clock", async () => {
+  const app = setup();
+  app.advanceWallClock(3_600_000);
+  let finishBody;
+  app.context.fetch = async () => ({
+    ok: true,
+    json: () => new Promise((resolve) => { finishBody = resolve; }),
+  });
+  const pending = app.controller.requestDeadlines();
+  await settle();
+  app.advance(5_000);
+  finishBody({
+    server_now: new Date(0).toISOString(),
+    absolute_deadline: new Date(60_000).toISOString(),
+  });
+  await pending;
+  assert.equal(app.controller.remainingDeadlineMs(), 55_000);
+});
+
+test("late successful validation cannot reveal content past its deadline", async () => {
+  const app = setup();
+  let respond;
+  app.context.fetch = () => new Promise((resolve) => { respond = resolve; });
+  const pending = app.controller.requestDeadlines();
+  app.advance(5_000);
+  respond({ ok: true, json: async () => ({
+    server_now: new Date(0).toISOString(),
+    absolute_deadline: new Date(4_000).toISOString(),
+  }) });
+  await pending;
+  assert.equal(app.document.body.style.opacity, "0");
+  app.context.fetch = async () => ({ status: 401 });
+  app.runTimers();
+  await settle();
+  assert.deepEqual(app.redirects, [app.controller.expiredUrlValue]);
+});
+
+test("initial HTML deadlines include navigation and controller loading time", () => {
+  const app = setup();
+  app.controller.disconnect();
+  app.advance(10_000);
+  const controller = app.createController(JSON.stringify({
+    server_now: new Date(0).toISOString(),
+    absolute_deadline: new Date(60_000).toISOString(),
+  }));
+  assert.equal(controller.remainingDeadlineMs(), 50_000);
+});
+
+test("Turbo deadlines include the age of prefetched HTML", () => {
+  const app = setup();
+  app.advance(30_000);
+  app.context.performance.getEntriesByName = (name, type) => {
+    assert.equal(name, "https://sure.example/accounts");
+    assert.equal(type, "resource");
+    return [{ initiatorType: "fetch", startTime: 10_000 }];
+  };
+  app.controller.deadlinesValueChanged(JSON.stringify({
+    server_now: new Date(10_000).toISOString(),
+    absolute_deadline: new Date(70_000).toISOString(),
+  }));
+  assert.equal(app.controller.remainingDeadlineMs(), 40_000);
 });
 
 test("an idle deadline check hides the page and redirects on unauthorized", async () => {

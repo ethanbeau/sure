@@ -104,6 +104,9 @@ jobs:
       - name: Lint/Format js code
         run: npm run lint
 
+      - name: JavaScript tests
+        run: npm test
+
   test_unit:
     runs-on: ubuntu-latest
     timeout-minutes: 10

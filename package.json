@@ -6,6 +6,7 @@
 	"version": "1.0.0",
 	"description": "The personal finance app for everyone",
 	"scripts": {
+		"test": "node --test 'test/javascript/**/*_test.mjs'",
 		"style:check": "biome check",
 		"style:fix": "biome check --write",
 		"lint": "biome lint",

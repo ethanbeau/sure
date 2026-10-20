@@ -16,6 +16,8 @@ export default class extends Controller {
     this.connected = true;
     this.lastSentAt = Number.NEGATIVE_INFINITY;
     this.timeoutTimer = null;
+    this.activityTimer = null;
+    this.activityPending = false;
     this.backgrounded = document.visibilityState === "hidden";
     this.resumeValidationRequired = false;
     this.pendingRequest = null;
@@ -35,9 +37,15 @@ export default class extends Controller {
   }
 
   disconnect() {
+    if (this.activityPending) {
+      this.cancelRequest();
+      this.requestDeadlines({ activity: true });
+    }
     this.connected = false;
     window.clearTimeout(this.timeoutTimer);
-    this.cancelRequest();
+    this.clearActivity();
+    // Let the keepalive heartbeat finish; detached responses cannot change UI.
+    this.cancelRequest({ preserveActivity: true });
     this.restoreVisibility();
   }
 
@@ -63,6 +71,7 @@ export default class extends Controller {
   resumeFromBackground() {
     if (!this.connected || document.visibilityState === "hidden") return;
 
+    if (this.backgrounded) this.cancelRequest();
     this.backgrounded = false;
     if (this.isLocallyUnexpired()) {
       // Returning before the known deadline must not depend on a network
@@ -79,11 +88,17 @@ export default class extends Controller {
   coverForResume() {
     if (!this.connected) return;
 
+    const wasBackgrounded = this.backgrounded;
     this.backgrounded = true;
     this.resumeValidationRequired = true;
     // Safari can suspend fetches and their timeout callbacks in the background.
     // Start a fresh check on return instead of waiting for a suspended request.
-    this.cancelRequest();
+    if (!wasBackgrounded) {
+      this.cancelRequest();
+      // Flush real interactions before suspension instead of losing a throttled
+      // final click or letting a background timer extend the idle period later.
+      if (this.activityPending) this.requestDeadlines({ activity: true });
+    }
     if (this.hideInBackgroundValue) this.coverContent();
   }
 
@@ -137,10 +152,38 @@ export default class extends Controller {
       this.resumeFromBackground();
       return;
     }
-    if (this.backgrounded || this.pendingRequest) return;
-    if (performance.now() - this.lastSentAt < this.activityThrottleMs) return;
+    this.activityPending = true;
+    this.scheduleActivity();
+  }
+
+  scheduleActivity() {
+    window.clearTimeout(this.activityTimer);
+    if (
+      !this.connected ||
+      !this.activityPending ||
+      this.pendingRequest ||
+      this.backgrounded ||
+      this.privacyScreenActive ||
+      document.visibilityState === "hidden"
+    )
+      return;
+
+    const delay =
+      this.activityThrottleMs - (performance.now() - this.lastSentAt);
+    if (delay > 0) {
+      this.activityTimer = window.setTimeout(
+        () => this.scheduleActivity(),
+        delay,
+      );
+      return;
+    }
 
     this.requestDeadlines({ activity: true });
+  }
+
+  clearActivity() {
+    window.clearTimeout(this.activityTimer);
+    this.activityPending = false;
   }
 
   async requestDeadlines({ activity = false } = {}) {
@@ -153,13 +196,21 @@ export default class extends Controller {
       return;
     }
 
-    const request = { controller: new AbortController() };
+    const request = {
+      controller: new AbortController(),
+      activity,
+      startedAt: performance.now(),
+      wallClockStartedAt: Date.now(),
+    };
     request.timer = window.setTimeout(
       () => request.controller.abort(),
       REQUEST_TIMEOUT_MS,
     );
     this.pendingRequest = request;
-    if (activity) this.lastSentAt = performance.now();
+    if (activity) {
+      this.clearActivity();
+      this.lastSentAt = request.startedAt;
+    }
 
     try {
       const headers = { "X-CSRF-Token": csrfToken, Accept: "application/json" };
@@ -174,6 +225,7 @@ export default class extends Controller {
       });
       if (this.pendingRequest !== request) return;
       if (response.status === 401) {
+        this.clearActivity();
         this.coverContent();
         window.location.replace(this.expiredUrlValue);
         return;
@@ -182,9 +234,13 @@ export default class extends Controller {
 
       const deadlines = await response.json();
       if (this.pendingRequest !== request) return;
-      this.applyDeadlines(deadlines);
+      this.applyDeadlines(deadlines, request);
       this.resumeValidationRequired = false;
-      if (!this.backgrounded && document.visibilityState !== "hidden") {
+      if (
+        !this.backgrounded &&
+        document.visibilityState !== "hidden" &&
+        this.isLocallyUnexpired()
+      ) {
         this.restoreVisibility();
       }
     } catch {
@@ -193,20 +249,41 @@ export default class extends Controller {
         window.location.reload();
     } finally {
       window.clearTimeout(request.timer);
-      if (this.pendingRequest === request) this.pendingRequest = null;
+      if (this.pendingRequest === request) {
+        this.pendingRequest = null;
+        this.scheduleActivity();
+      }
     }
   }
 
-  cancelRequest() {
+  cancelRequest({ preserveActivity = false } = {}) {
     const request = this.pendingRequest;
     this.pendingRequest = null;
     if (!request) return;
 
     window.clearTimeout(request.timer);
-    request.controller.abort();
+    if (!preserveActivity || !request.activity) request.controller.abort();
   }
 
-  applyDeadlines(deadlines) {
+  pageRequestTiming() {
+    // Turbo visits use fetch; a hard navigation has its own timing entry.
+    // Starting the clock before the server sample is conservative and also
+    // accounts for prefetched HTML waiting before it is displayed.
+    const url = window.location.href.split("#")[0];
+    const entries = [
+      ...performance.getEntriesByType("navigation"),
+      ...performance
+        .getEntriesByName(url, "resource")
+        .filter((entry) => entry.initiatorType === "fetch"),
+    ];
+    const startedAt = Math.max(0, ...entries.map((entry) => entry.startTime));
+    return {
+      startedAt,
+      wallClockStartedAt: performance.timeOrigin + startedAt,
+    };
+  }
+
+  applyDeadlines(deadlines, timing = this.pageRequestTiming()) {
     const serverNow = Date.parse(deadlines.server_now);
     if (!Number.isFinite(serverNow))
       throw new Error("Invalid session deadlines");
@@ -232,9 +309,11 @@ export default class extends Controller {
     }
 
     const remaining = Math.min(...deadlinesAt) - serverNow;
-    this.deadlineAt = performance.now() + remaining;
-    this.wallClockDeadlineAt = Date.now() + remaining;
+    this.deadlineAt = timing.startedAt + remaining;
+    this.wallClockDeadlineAt = timing.wallClockStartedAt + remaining;
     this.scheduleDeadlineCheck();
+    if (!this.isLocallyUnexpired()) this.coverContent();
+    this.scheduleActivity();
   }
 
   isLocallyUnexpired() {
@@ -278,8 +357,10 @@ export default class extends Controller {
     this.coverContent();
 
     // A stalled renewal must not delay hiding the page at its deadline.
+    const activity = this.activityPending;
+    this.clearActivity();
     this.cancelRequest();
-    return this.requestDeadlines();
+    return this.requestDeadlines({ activity });
   }
 
   restoreVisibility() {
